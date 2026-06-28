@@ -1,15 +1,19 @@
 package mg.itu.etu004361.util;
 
-import javax.servlet.ServletContext;
-import java.util.ArrayList;
-import java.util.List;
+import java.lang.reflect.Method;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
+import javax.servlet.ServletContext;
+import mg.itu.etu004361.Mapping;
+import mg.itu.etu004361.annotation.Controller;
+import mg.itu.etu004361.annotation.UrlMapping;
 
 public class ControllerScanner {
-    public static List<Class<?>> scanPackage(String packageName, ServletContext context) {
-        List<Class<?>> classes = new ArrayList<>();
+    public static Map<String, Mapping> scanPackage(String packageName, ServletContext context) {
+        Map<String, Mapping> mappings = new LinkedHashMap<>();
         if (packageName == null || packageName.isEmpty()) {
-            return classes;
+            return mappings;
         }
 
         String packagePath = packageName.replace('.', '/');
@@ -18,22 +22,22 @@ public class ControllerScanner {
 
         if (resourcePaths == null) {
             context.log("ControllerScanner: package non trouvé : " + packageName);
-            return classes;
+            return mappings;
         }
 
         for (String path : resourcePaths) {
-            scanResource(path, classes, context);
+            scanResource(path, mappings, context);
         }
 
-        return classes;
+        return mappings;
     }
 
-    private static void scanResource(String resourcePath, List<Class<?>> classes, ServletContext context) {
+    private static void scanResource(String resourcePath, Map<String, Mapping> mappings, ServletContext context) {
         if (resourcePath.endsWith("/")) {
             Set<String> childPaths = context.getResourcePaths(resourcePath);
             if (childPaths != null) {
                 for (String childPath : childPaths) {
-                    scanResource(childPath, classes, context);
+                    scanResource(childPath, mappings, context);
                 }
             }
             return;
@@ -49,7 +53,17 @@ public class ControllerScanner {
 
         try {
             Class<?> clazz = Thread.currentThread().getContextClassLoader().loadClass(className);
-            classes.add(clazz);
+            if (clazz.isAnnotationPresent(Controller.class)) {
+                context.log("Classe trouvée : " + clazz.getName());
+                for (Method method : clazz.getDeclaredMethods()) {
+                    UrlMapping annotation = method.getAnnotation(UrlMapping.class);
+                    if (annotation != null) {
+                        String url = annotation.value();
+                        mappings.put(url, new Mapping(clazz.getName(), method.getName()));
+                        context.log("URL trouvée : " + url + " -> " + clazz.getName() + "." + method.getName());
+                    }
+                }
+            }
         } catch (ClassNotFoundException e) {
             context.log("ControllerScanner: impossible de charger la classe " + className + " -> " + e.getMessage());
         }
