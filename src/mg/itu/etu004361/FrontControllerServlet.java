@@ -2,19 +2,17 @@ package mg.itu.etu004361;
 
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import mg.itu.etu004361.annotation.Controller;
 import mg.itu.etu004361.util.ControllerScanner;
 
 public class FrontControllerServlet extends HttpServlet {
-    private final List<String> controllers = new ArrayList<>();
-    private final List<String> scanDetails = new ArrayList<>();
+    private final Map<String, Mapping> mappings = new LinkedHashMap<>();
     private String packageToScan;
 
     @Override
@@ -30,43 +28,40 @@ public class FrontControllerServlet extends HttpServlet {
             return;
         }
 
+        getServletContext().log("=== SCAN FRAMEWORK ===");
         getServletContext().log("Package scanné : " + packageToScan);
-        List<Class<?>> classes = ControllerScanner.scanPackage(packageToScan, getServletContext());
-
-        for (Class<?> clazz : classes) {
-            getServletContext().log("Classe trouvée : " + clazz.getName());
-            if (clazz.isAnnotationPresent(Controller.class)) {
-                getServletContext().log("@Controller détecté");
-                controllers.add(clazz.getName());
-                scanDetails.add("Classe trouvée : " + clazz.getName() + "\n@Controller : OUI");
-            } else {
-                getServletContext().log("Pas de @Controller");
-                scanDetails.add("Classe trouvée : " + clazz.getName() + "\n@Controller : NON");
-            }
-        }
+        mappings.clear();
+        mappings.putAll(ControllerScanner.scanPackage(packageToScan, getServletContext()));
 
         getServletContext().log("====================");
         getServletContext().log("Controllers enregistrés :");
-        for (String controller : controllers) {
-            getServletContext().log(controller);
+        for (Map.Entry<String, Mapping> entry : mappings.entrySet()) {
+            getServletContext().log(entry.getKey() + " -> " + entry.getValue().getClassName() + "." + entry.getValue().getMethodName());
         }
     }
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         response.setContentType("text/plain; charset=UTF-8");
+        String path = request.getPathInfo();
+        if (path == null || path.isEmpty() || "/".equals(path)) {
+            path = "/";
+        }
+
         try (PrintWriter writer = response.getWriter()) {
-            writer.println("Package scanné : " + packageToScan);
-            writer.println();
-            for (String detail : scanDetails) {
-                writer.println(detail);
+            if (mappings.containsKey(path)) {
+                Mapping mapping = mappings.get(path);
+                writer.println("URL supportée");
                 writer.println();
-            }
-            writer.println("====================");
-            writer.println();
-            writer.println("Controllers trouvés :");
-            for (String controller : controllers) {
-                writer.println(controller);
+                writer.println("Classe : " + mapping.getClassName());
+                writer.println("Méthode : " + mapping.getMethodName());
+            } else {
+                writer.println("URL non supportée");
+                writer.println();
+                writer.println("URLs disponibles :");
+                for (String url : mappings.keySet()) {
+                    writer.println(url);
+                }
             }
         }
     }
