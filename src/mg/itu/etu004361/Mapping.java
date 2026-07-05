@@ -1,19 +1,41 @@
 package mg.itu.etu004361;
 
-public class Mapping {
-    private final String className;
-    private final String methodName;
+import java.lang.reflect.Method;
 
-    public Mapping(String className, String methodName) {
-        this.className = className;
-        this.methodName = methodName;
+public class Mapping {
+    private final String httpMethod;
+    private final String url;
+    private final Class<?> controllerClass;
+    private final Method controllerMethod;
+
+    public Mapping(String httpMethod, String url, Class<?> controllerClass, Method controllerMethod) {
+        this.httpMethod = httpMethod;
+        this.url = url;
+        this.controllerClass = controllerClass;
+        this.controllerMethod = controllerMethod;
+    }
+
+    public String getHttpMethod() {
+        return httpMethod;
+    }
+
+    public String getUrl() {
+        return url;
+    }
+
+    public Class<?> getControllerClass() {
+        return controllerClass;
+    }
+
+    public Method getControllerMethod() {
+        return controllerMethod;
     }
 
     public String getClassName() {
-        return className;
+        return controllerClass.getName();
     }
 
     public String getMethodName() {
-        return methodName;
+        return controllerMethod.getName();
     }
 }

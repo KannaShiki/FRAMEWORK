@@ -32,6 +32,10 @@ public class ControllerScanner {
         return mappings;
     }
 
+    private static String buildRouteKey(String method, String url) {
+        return method.toUpperCase() + " " + url;
+    }
+
     private static void scanResource(String resourcePath, Map<String, Mapping> mappings, ServletContext context) {
         if (resourcePath.endsWith("/")) {
             Set<String> childPaths = context.getResourcePaths(resourcePath);
@@ -54,13 +58,30 @@ public class ControllerScanner {
         try {
             Class<?> clazz = Thread.currentThread().getContextClassLoader().loadClass(className);
             if (clazz.isAnnotationPresent(Controller.class)) {
-                context.log("Classe trouvée : " + clazz.getName());
                 for (Method method : clazz.getDeclaredMethods()) {
                     UrlMapping annotation = method.getAnnotation(UrlMapping.class);
                     if (annotation != null) {
                         String url = annotation.value();
-                        mappings.put(url, new Mapping(clazz.getName(), method.getName()));
-                        context.log("URL trouvée : " + url + " -> " + clazz.getName() + "." + method.getName());
+                        String httpMethod = annotation.method().toUpperCase();
+                        String key = buildRouteKey(httpMethod, url);
+
+                        if (mappings.containsKey(key)) {
+                            Mapping previous = mappings.get(key);
+                            throw new IllegalStateException(
+                                    "failed: duplicate route '"
+                                            + key
+                                            + "' defined in "
+                                            + previous.getClassName()
+                                            + "."
+                                            + previous.getMethodName()
+                                            + " and "
+                                            + clazz.getName()
+                                            + "."
+                                            + method.getName());
+                        }
+
+                        method.setAccessible(true);
+                        mappings.put(key, new Mapping(httpMethod, url, clazz, method));
                     }
                 }
             }
