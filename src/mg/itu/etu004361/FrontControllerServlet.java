@@ -14,6 +14,7 @@ import mg.itu.etu004361.util.ControllerScanner;
 public class FrontControllerServlet extends HttpServlet {
     private final Map<String, Mapping> mappings = new LinkedHashMap<>();
     private String packageToScan;
+    private String initializationError;
 
     @Override
     public void init(ServletConfig config) throws ServletException {
@@ -31,7 +32,13 @@ public class FrontControllerServlet extends HttpServlet {
         getServletContext().log("=== SCAN FRAMEWORK ===");
         getServletContext().log("Package scanné : " + packageToScan);
         mappings.clear();
-        mappings.putAll(ControllerScanner.scanPackage(packageToScan, getServletContext()));
+        try {
+            mappings.putAll(ControllerScanner.scanPackage(packageToScan, getServletContext()));
+        } catch (IllegalStateException e) {
+            getServletContext().log(e.getMessage());
+            initializationError = e.getMessage();
+            return;
+        }
 
         getServletContext().log("====================");
         getServletContext().log("Controllers enregistrés :");
@@ -42,25 +49,35 @@ public class FrontControllerServlet extends HttpServlet {
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
+        if (initializationError != null) {
+            response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, initializationError);
+            return;
+        }
+
         response.setContentType("text/plain; charset=UTF-8");
         String path = request.getPathInfo();
         if (path == null || path.isEmpty() || "/".equals(path)) {
             path = "/";
         }
 
+        String httpMethod = request.getMethod().toUpperCase();
+        String routeKey = httpMethod + " " + path;
+
         try (PrintWriter writer = response.getWriter()) {
-            if (mappings.containsKey(path)) {
-                Mapping mapping = mappings.get(path);
-                writer.println("URL supportée");
+            if (mappings.containsKey(routeKey)) {
+                Mapping mapping = mappings.get(routeKey);
+                writer.println("Route supported");
                 writer.println();
+                writer.println("HTTP method : " + mapping.getMethod());
+                writer.println("URL : " + mapping.getUrl());
                 writer.println("Classe : " + mapping.getClassName());
                 writer.println("Méthode : " + mapping.getMethodName());
             } else {
-                writer.println("URL non supportée");
+                writer.println("Route not supported");
                 writer.println();
-                writer.println("URLs disponibles :");
-                for (String url : mappings.keySet()) {
-                    writer.println(url);
+                writer.println("Available routes :");
+                for (String route : mappings.keySet()) {
+                    writer.println(route);
                 }
             }
         }
