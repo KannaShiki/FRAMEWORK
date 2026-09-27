@@ -18,7 +18,7 @@ public class FrontControllerServlet extends HttpServlet {
     private String packageToScan;
     private String initializationError;
 
-    // préfixe et suffixe lus depuis web.xml
+    // prefixe et suffixe lus depuis web.xml
     private String prefixe;
     private String suffixe;
 
@@ -52,7 +52,7 @@ public class FrontControllerServlet extends HttpServlet {
             getServletContext().log(entry.getKey() + " -> " + entry.getValue().getClassName() + "." + entry.getValue().getMethodName());
         }
 
-        // lecture du préfixe et suffixe depuis web.xml
+        // lecture du prefixe et suffixe depuis web.xml
         this.prefixe = getServletConfig().getInitParameter("prefixe");
         this.suffixe = getServletConfig().getInitParameter("suffixe");
         getServletContext().log("[Framework] prefixe = " + prefixe);
@@ -111,6 +111,14 @@ public class FrontControllerServlet extends HttpServlet {
 
                 Object result = method.invoke(instance);
 
+                if (mapping.isWebAPI()) {
+                    response.setContentType("application/json; charset=UTF-8");
+                    try (PrintWriter writer = response.getWriter()) {
+                        writer.write(toJson(result));
+                    }
+                    return;
+                }
+
                 if (result instanceof mg.itu.etu004361.ModelAndView) {
                     mg.itu.etu004361.ModelAndView mv = (mg.itu.etu004361.ModelAndView) result;
 
@@ -153,6 +161,144 @@ public class FrontControllerServlet extends HttpServlet {
                 }
             }
         }
+    }
+
+    private String toJson(Object value) {
+        if (value == null) {
+            return "null";
+        }
+
+        if (value instanceof String) {
+            String text = (String) value;
+            String trimmed = text.trim();
+            if (trimmed.startsWith("{") || trimmed.startsWith("[") || "true".equalsIgnoreCase(trimmed)
+                    || "false".equalsIgnoreCase(trimmed) || "null".equalsIgnoreCase(trimmed)
+                    || trimmed.matches("-?\\d+(\\.\\d+)?")) {
+                return text;
+            }
+            return quoteJson(text);
+        }
+
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+
+        if (value instanceof Character) {
+            return quoteJson(String.valueOf(value));
+        }
+
+        if (value instanceof java.util.Map<?, ?>) {
+            return mapToJson((java.util.Map<?, ?>) value);
+        }
+
+        if (value instanceof java.util.Collection<?>) {
+            return collectionToJson((java.util.Collection<?>) value);
+        }
+
+        if (value.getClass().isArray()) {
+            int length = java.lang.reflect.Array.getLength(value);
+            java.util.List<Object> list = new java.util.ArrayList<>();
+            for (int i = 0; i < length; i++) {
+                list.add(java.lang.reflect.Array.get(value, i));
+            }
+            return collectionToJson(list);
+        }
+
+        if (value instanceof Enum<?>) {
+            return quoteJson(((Enum<?>) value).name());
+        }
+
+        return beanToJson(value);
+    }
+
+    private String mapToJson(java.util.Map<?, ?> map) {
+        StringBuilder json = new StringBuilder();
+        json.append("{");
+        boolean first = true;
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (!first) {
+                json.append(",");
+            }
+            first = false;
+            json.append(quoteJson(String.valueOf(entry.getKey()))).append(":").append(toJson(entry.getValue()));
+        }
+        json.append("}");
+        return json.toString();
+    }
+
+    private String collectionToJson(java.util.Collection<?> collection) {
+        StringBuilder json = new StringBuilder();
+        json.append("[");
+        boolean first = true;
+        for (Object item : collection) {
+            if (!first) {
+                json.append(",");
+            }
+            first = false;
+            json.append(toJson(item));
+        }
+        json.append("]");
+        return json.toString();
+    }
+
+    private String beanToJson(Object bean) {
+        java.util.Map<String, Object> properties = new java.util.LinkedHashMap<>();
+        for (java.lang.reflect.Method method : bean.getClass().getMethods()) {
+            String name = method.getName();
+            if (method.getParameterCount() != 0 || name.equals("getClass")) {
+                continue;
+            }
+            if (name.startsWith("get") && name.length() > 3) {
+                String property = Character.toLowerCase(name.charAt(3)) + name.substring(4);
+                try {
+                    properties.put(property, method.invoke(bean));
+                } catch (ReflectiveOperationException ignored) {
+                    // ignore unreadable properties
+                }
+            } else if (name.startsWith("is") && name.length() > 2) {
+                String property = Character.toLowerCase(name.charAt(2)) + name.substring(3);
+                try {
+                    properties.put(property, method.invoke(bean));
+                } catch (ReflectiveOperationException ignored) {
+                    // ignore unreadable properties
+                }
+            }
+        }
+        return mapToJson(properties);
+    }
+
+    private String quoteJson(String value) {
+        StringBuilder sb = new StringBuilder();
+        sb.append('"');
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            switch (ch) {
+                case '\\':
+                    sb.append("\\\\");
+                    break;
+                case '"':
+                    sb.append("\\\"");
+                    break;
+                case '\n':
+                    sb.append("\\n");
+                    break;
+                case '\r':
+                    sb.append("\\r");
+                    break;
+                case '\t':
+                    sb.append("\\t");
+                    break;
+                default:
+                    if (ch < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) ch));
+                    } else {
+                        sb.append(ch);
+                    }
+                    break;
+            }
+        }
+        sb.append('"');
+        return sb.toString();
     }
 
     @Override

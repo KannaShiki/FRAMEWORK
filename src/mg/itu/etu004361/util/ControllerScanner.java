@@ -8,6 +8,7 @@ import javax.servlet.ServletContext;
 import mg.itu.etu004361.Mapping;
 import mg.itu.etu004361.annotation.Controller;
 import mg.itu.etu004361.annotation.UrlMapping;
+import mg.itu.etu004361.annotation.WebAPI;
 
 public class ControllerScanner {
     public static Map<String, Mapping> scanPackage(String packageName, ServletContext context) {
@@ -80,7 +81,8 @@ public class ControllerScanner {
                                             + method.getName());
                         }
 
-                        mappings.put(key, new Mapping(httpMethod, url, clazz.getName(), method.getName()));
+                        boolean isWebAPI = method.isAnnotationPresent(WebAPI.class);
+                        mappings.put(key, new Mapping(httpMethod, url, clazz.getName(), method.getName(), isWebAPI));
                     }
                 }
             }
