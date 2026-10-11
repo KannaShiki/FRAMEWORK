@@ -2,7 +2,9 @@ package mg.itu.etu004361;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import javax.servlet.RequestDispatcher;
@@ -188,17 +190,214 @@ public class FrontControllerServlet extends HttpServlet {
     }
 
     private Object[] bindMethodArguments(Method method, HttpServletRequest request) {
-        java.lang.reflect.Parameter[] parameters = method.getParameters();
+        Parameter[] parameters = method.getParameters();
         Object[] arguments = new Object[parameters.length];
 
         for (int i = 0; i < parameters.length; i++) {
-            java.lang.reflect.Parameter parameter = parameters[i];
-            String parameterName = parameter.getName();
-            String requestValue = request.getParameter(parameterName);
-            arguments[i] = convertSimpleValue(requestValue, parameter.getType());
+            Parameter parameter = parameters[i];
+            arguments[i] = bindParameterValue(parameter, request);
         }
 
         return arguments;
+    }
+
+    private Object bindParameterValue(Parameter parameter, HttpServletRequest request) {
+        String parameterName = parameter.getName();
+        Class<?> parameterType = parameter.getType();
+
+        if (isSimpleType(parameterType)) {
+            String requestValue = request.getParameter(parameterName);
+            return convertSimpleValue(requestValue, parameterType);
+        }
+
+        return buildObjectFromRequest(parameterName, parameterType, request);
+    }
+
+    private boolean isSimpleType(Class<?> type) {
+        return type.isPrimitive()
+                || type == String.class
+                || type == Integer.class
+                || type == Long.class
+                || type == Double.class
+                || type == Float.class
+                || type == Boolean.class
+                || type == Short.class
+                || type == Byte.class
+                || type == Character.class;
+    }
+
+    private Object buildObjectFromRequest(String parameterName, Class<?> parameterType, HttpServletRequest request) {
+        if (parameterName == null || parameterName.isEmpty()) {
+            return null;
+        }
+
+        try {
+            Object object = parameterType.getDeclaredConstructor().newInstance();
+            populateObjectFields(object, parameterName, request);
+            return object;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void populateObjectFields(Object object, String parameterName, HttpServletRequest request) {
+        Map<String, String[]> params = request.getParameterMap();
+
+        for (Map.Entry<String, String[]> entry : params.entrySet()) {
+            String key = entry.getKey();
+            if (!key.startsWith(parameterName + ".")) {
+                continue;
+            }
+
+            String propertyPath = key.substring(parameterName.length() + 1);
+            if (propertyPath == null || propertyPath.isEmpty()) {
+                continue;
+            }
+
+            String value = entry.getValue() != null && entry.getValue().length > 0 ? entry.getValue()[0] : null;
+            setNestedProperty(object, propertyPath, value);
+        }
+    }
+
+    private void setNestedProperty(Object target, String propertyPath, String value) {
+        if (target == null || propertyPath == null || propertyPath.isEmpty()) {
+            return;
+        }
+
+        String[] parts = propertyPath.split("\\.");
+        Object current = target;
+
+        for (int i = 0; i < parts.length - 1; i++) {
+            String part = parts[i];
+            Object nested = readOrCreateNestedObject(current, part);
+            if (nested == null) {
+                return;
+            }
+            current = nested;
+        }
+
+        String finalProperty = parts[parts.length - 1];
+        setPropertyValue(current, finalProperty, value);
+    }
+
+    private Object readOrCreateNestedObject(Object target, String propertyName) {
+        Object nested = readProperty(target, propertyName);
+        if (nested != null) {
+            return nested;
+        }
+
+        Field field = findField(target.getClass(), propertyName);
+        if (field == null) {
+            return null;
+        }
+
+        Class<?> fieldType = field.getType();
+        if (isSimpleType(fieldType)) {
+            return null;
+        }
+
+        try {
+            Object newObject = fieldType.getDeclaredConstructor().newInstance();
+            setPropertyValue(target, propertyName, newObject);
+            return newObject;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Object readProperty(Object target, String propertyName) {
+        try {
+            Field field = findField(target.getClass(), propertyName);
+            if (field != null) {
+                field.setAccessible(true);
+                return field.get(target);
+            }
+
+            String getterName = "get" + capitalize(propertyName);
+            Method getter = target.getClass().getMethod(getterName);
+            return getter.invoke(target);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void setPropertyValue(Object target, String propertyName, String value) {
+        if (target == null) {
+            return;
+        }
+
+        Field field = findField(target.getClass(), propertyName);
+        if (field != null) {
+            try {
+                field.setAccessible(true);
+                field.set(target, convertSimpleValue(value, field.getType()));
+            } catch (Exception e) {
+                // ignore invalid fields
+            }
+            return;
+        }
+
+        String setterName = "set" + capitalize(propertyName);
+        for (Method method : target.getClass().getMethods()) {
+            if (method.getName().equals(setterName) && method.getParameterCount() == 1) {
+                try {
+                    Object convertedValue = convertSimpleValue(value, method.getParameterTypes()[0]);
+                    method.invoke(target, convertedValue);
+                    return;
+                } catch (Exception e) {
+                    // ignore invalid setter conversion
+                }
+            }
+        }
+    }
+
+    private void setPropertyValue(Object target, String propertyName, Object value) {
+        if (target == null) {
+            return;
+        }
+
+        Field field = findField(target.getClass(), propertyName);
+        if (field != null) {
+            try {
+                field.setAccessible(true);
+                field.set(target, value);
+            } catch (Exception e) {
+                // ignore invalid fields
+            }
+            return;
+        }
+
+        String setterName = "set" + capitalize(propertyName);
+        for (Method method : target.getClass().getMethods()) {
+            if (method.getName().equals(setterName) && method.getParameterCount() == 1) {
+                try {
+                    method.invoke(target, value);
+                    return;
+                } catch (Exception e) {
+                    // ignore invalid setter conversion
+                }
+            }
+        }
+    }
+
+    private Field findField(Class<?> clazz, String fieldName) {
+        Class<?> current = clazz;
+        while (current != null) {
+            for (Field field : current.getDeclaredFields()) {
+                if (field.getName().equals(fieldName)) {
+                    return field;
+                }
+            }
+            current = current.getSuperclass();
+        }
+        return null;
+    }
+
+    private String capitalize(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        return Character.toUpperCase(value.charAt(0)) + value.substring(1);
     }
 
     private Object convertSimpleValue(String requestValue, Class<?> parameterType) {
