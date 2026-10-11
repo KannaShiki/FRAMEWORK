@@ -20,7 +20,7 @@ LIB_DIR="$TOMCAT_HOME/lib"
 TMP_DIR=$(mktemp -d)
 
 find "$SRC_DIR" -name '*.java' > "$TMP_DIR/framework_sources.txt"
-javac -cp "$LIB_DIR/servlet-api.jar" -d "$TMP_DIR" @"$TMP_DIR/framework_sources.txt"
+javac -cp "$LIB_DIR/servlet-api.jar" -parameters -d "$TMP_DIR" @"$TMP_DIR/framework_sources.txt"
 jar cf "$JAR_FILE" -C "$TMP_DIR" .
 rm -rf "$TMP_DIR"
 
