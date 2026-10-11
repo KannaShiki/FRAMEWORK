@@ -107,14 +107,29 @@ public class FrontControllerServlet extends HttpServlet {
             try {
                 Class<?> clazz = Class.forName(mapping.getClassName());
                 Object instance = clazz.getDeclaredConstructor().newInstance();
-                Method method = clazz.getDeclaredMethod(mapping.getMethodName());
+                Method method = resolveControllerMethod(clazz, mapping.getMethodName());
+                Object[] methodArguments = bindMethodArguments(method, request);
 
-                Object result = method.invoke(instance);
+                Object result = method.invoke(instance, methodArguments);
 
                 if (mapping.isWebAPI()) {
                     response.setContentType("application/json; charset=UTF-8");
                     try (PrintWriter writer = response.getWriter()) {
                         writer.write(toJson(result));
+                    }
+                    return;
+                }
+
+                if (result instanceof String) {
+                    String text = (String) result;
+                    String trimmed = text.trim();
+                    if (trimmed.startsWith("<!DOCTYPE html") || trimmed.startsWith("<html") || trimmed.contains("<form")) {
+                        response.setContentType("text/html; charset=UTF-8");
+                    } else {
+                        response.setContentType("text/plain; charset=UTF-8");
+                    }
+                    try (PrintWriter writer = response.getWriter()) {
+                        writer.write(text);
                     }
                     return;
                 }
@@ -161,6 +176,92 @@ public class FrontControllerServlet extends HttpServlet {
                 }
             }
         }
+    }
+
+    private Method resolveControllerMethod(Class<?> clazz, String methodName) throws NoSuchMethodException {
+        for (Method candidate : clazz.getDeclaredMethods()) {
+            if (candidate.getName().equals(methodName)) {
+                return candidate;
+            }
+        }
+        return clazz.getDeclaredMethod(methodName);
+    }
+
+    private Object[] bindMethodArguments(Method method, HttpServletRequest request) {
+        java.lang.reflect.Parameter[] parameters = method.getParameters();
+        Object[] arguments = new Object[parameters.length];
+
+        for (int i = 0; i < parameters.length; i++) {
+            java.lang.reflect.Parameter parameter = parameters[i];
+            String parameterName = parameter.getName();
+            String requestValue = request.getParameter(parameterName);
+            arguments[i] = convertSimpleValue(requestValue, parameter.getType());
+        }
+
+        return arguments;
+    }
+
+    private Object convertSimpleValue(String requestValue, Class<?> parameterType) {
+        if (requestValue == null) {
+            if (parameterType == String.class) {
+                return null;
+            }
+            if (parameterType == Boolean.class || parameterType == boolean.class) {
+                return parameterType == boolean.class ? false : null;
+            }
+            if (parameterType == Character.class || parameterType == char.class) {
+                return parameterType == char.class ? '\0' : null;
+            }
+            if (parameterType == Byte.class || parameterType == byte.class) {
+                return parameterType == byte.class ? (byte) 0 : null;
+            }
+            if (parameterType == Short.class || parameterType == short.class) {
+                return parameterType == short.class ? (short) 0 : null;
+            }
+            if (parameterType == Integer.class || parameterType == int.class) {
+                return parameterType == int.class ? 0 : null;
+            }
+            if (parameterType == Long.class || parameterType == long.class) {
+                return parameterType == long.class ? 0L : null;
+            }
+            if (parameterType == Float.class || parameterType == float.class) {
+                return parameterType == float.class ? 0.0f : null;
+            }
+            if (parameterType == Double.class || parameterType == double.class) {
+                return parameterType == double.class ? 0.0d : null;
+            }
+            return null;
+        }
+
+        if (parameterType == String.class) {
+            return requestValue;
+        }
+        if (parameterType == Integer.class || parameterType == int.class) {
+            return Integer.valueOf(requestValue);
+        }
+        if (parameterType == Long.class || parameterType == long.class) {
+            return Long.valueOf(requestValue);
+        }
+        if (parameterType == Double.class || parameterType == double.class) {
+            return Double.valueOf(requestValue);
+        }
+        if (parameterType == Float.class || parameterType == float.class) {
+            return Float.valueOf(requestValue);
+        }
+        if (parameterType == Boolean.class || parameterType == boolean.class) {
+            return Boolean.valueOf(requestValue);
+        }
+        if (parameterType == Short.class || parameterType == short.class) {
+            return Short.valueOf(requestValue);
+        }
+        if (parameterType == Byte.class || parameterType == byte.class) {
+            return Byte.valueOf(requestValue);
+        }
+        if (parameterType == Character.class || parameterType == char.class) {
+            return requestValue.isEmpty() ? '\0' : requestValue.charAt(0);
+        }
+
+        return requestValue;
     }
 
     private String toJson(Object value) {
