@@ -1,20 +1,30 @@
 package mg.itu.etu004361;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import javax.servlet.RequestDispatcher;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
+import javax.servlet.annotation.MultipartConfig;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.Part;
 import mg.itu.etu004361.util.ControllerScanner;
 
+@MultipartConfig(
+        maxFileSize = 10 * 1024 * 1024,
+        maxRequestSize = 20 * 1024 * 1024,
+        fileSizeThreshold = 1024
+)
 public class FrontControllerServlet extends HttpServlet {
     private final Map<String, Mapping> mappings = new LinkedHashMap<>();
     private String packageToScan;
@@ -205,12 +215,119 @@ public class FrontControllerServlet extends HttpServlet {
         String parameterName = parameter.getName();
         Class<?> parameterType = parameter.getType();
 
+        if (parameterType == MapFile.class) {
+            return buildMapFileFromRequest(parameterName, request);
+        }
+
         if (isSimpleType(parameterType)) {
             String requestValue = request.getParameter(parameterName);
             return convertSimpleValue(requestValue, parameterType);
         }
 
         return buildObjectFromRequest(parameterName, parameterType, request);
+    }
+
+    private Map<String, String[]> getRequestTextParameters(HttpServletRequest request) {
+        Map<String, String[]> params = new LinkedHashMap<>();
+        if (request.getParameterMap() != null) {
+            params.putAll(request.getParameterMap());
+        }
+
+        if (!isMultipartRequest(request)) {
+            return params;
+        }
+
+        try {
+            for (Part part : request.getParts()) {
+                if (part == null || part.getName() == null || part.getSubmittedFileName() != null
+                        && !part.getSubmittedFileName().trim().isEmpty()) {
+                    continue;
+                }
+
+                String value = readPartAsString(part);
+                params.put(part.getName(), new String[]{value});
+            }
+        } catch (Exception ignored) {
+            // ignore malformed multipart data and keep non-file parameters
+        }
+
+        return params;
+    }
+
+    private boolean isMultipartRequest(HttpServletRequest request) {
+        String contentType = request.getContentType();
+        return contentType != null && contentType.toLowerCase(Locale.ROOT).contains("multipart/");
+    }
+
+    private String readPartAsString(Part part) throws IOException {
+        if (part == null) {
+            return null;
+        }
+
+        try (InputStream inputStream = part.getInputStream(); ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int length;
+            while ((length = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, length);
+            }
+            return outputStream.toString();
+        }
+    }
+
+    private MapFile buildMapFileFromRequest(String parameterName, HttpServletRequest request) {
+        if (parameterName == null || parameterName.isEmpty() || !isMultipartRequest(request)) {
+            return null;
+        }
+
+        try {
+            Part part = request.getPart(parameterName);
+            return buildMapFileFromPart(part);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private MapFile buildMapFileFromPart(Part part) {
+        if (part == null) {
+            return null;
+        }
+
+        String submittedFileName = part.getSubmittedFileName();
+        if (submittedFileName == null || submittedFileName.trim().isEmpty()) {
+            return null;
+        }
+
+        String fileName = submittedFileName.replace('\\', '/');
+        int lastSeparator = Math.max(fileName.lastIndexOf('/'), fileName.lastIndexOf('\\'));
+        if (lastSeparator >= 0) {
+            fileName = fileName.substring(lastSeparator + 1);
+        }
+
+        String extension = "";
+        int lastDot = fileName.lastIndexOf('.');
+        if (lastDot > 0 && lastDot < fileName.length() - 1) {
+            extension = fileName.substring(lastDot + 1);
+        }
+
+        byte[] bytes = readPartBytes(part);
+        return new MapFile(fileName, extension, bytes);
+    }
+
+    private byte[] readPartBytes(Part part) {
+        if (part == null) {
+            return new byte[0];
+        }
+
+        try (InputStream inputStream = part.getInputStream(); ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int length;
+            while ((length = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, length);
+            }
+            return outputStream.toByteArray();
+        } catch (IOException ex) {
+            return new byte[0];
+        }
     }
 
     private boolean isSimpleType(Class<?> type) {
@@ -241,7 +358,7 @@ public class FrontControllerServlet extends HttpServlet {
     }
 
     private void populateObjectFields(Object object, String parameterName, HttpServletRequest request) {
-        Map<String, String[]> params = request.getParameterMap();
+        Map<String, String[]> params = getRequestTextParameters(request);
 
         for (Map.Entry<String, String[]> entry : params.entrySet()) {
             String key = entry.getKey();
@@ -257,9 +374,69 @@ public class FrontControllerServlet extends HttpServlet {
             String value = entry.getValue() != null && entry.getValue().length > 0 ? entry.getValue()[0] : null;
             setNestedProperty(object, propertyPath, value);
         }
+
+        if (isMultipartRequest(request)) {
+            try {
+                for (Part part : request.getParts()) {
+                    System.out.println("DEBUG_PART name=" + part.getName() + " submitted=" + part.getSubmittedFileName() + " contentType=" + part.getContentType());
+                    if (part == null || part.getName() == null || part.getSubmittedFileName() == null || part.getSubmittedFileName().trim().isEmpty()) {
+                        continue;
+                    }
+
+                    String key = part.getName();
+                    if (!key.startsWith(parameterName + ".")) {
+                        continue;
+                    }
+
+                    String propertyPath = key.substring(parameterName.length() + 1);
+                    if (propertyPath == null || propertyPath.isEmpty()) {
+                        continue;
+                    }
+
+                    setNestedProperty(object, propertyPath, buildMapFileFromPart(part));
+                }
+            } catch (Exception ignored) {
+                System.out.println("DEBUG_PART_ERR " + ignored.getMessage());
+                // ignore malformed or unsupported multipart data
+            }
+        }
+    }
+
+    private boolean isMultipartFileField(HttpServletRequest request, String fieldName) {
+        if (!isMultipartRequest(request) || fieldName == null || fieldName.isEmpty()) {
+            return false;
+        }
+
+        try {
+            Part part = request.getPart(fieldName);
+            return part != null && part.getSubmittedFileName() != null && !part.getSubmittedFileName().trim().isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void setNestedProperty(Object target, String propertyPath, String value) {
+        if (target == null || propertyPath == null || propertyPath.isEmpty()) {
+            return;
+        }
+
+        String[] parts = propertyPath.split("\\.");
+        Object current = target;
+
+        for (int i = 0; i < parts.length - 1; i++) {
+            String part = parts[i];
+            Object nested = readOrCreateNestedObject(current, part);
+            if (nested == null) {
+                return;
+            }
+            current = nested;
+        }
+
+        String finalProperty = parts[parts.length - 1];
+        setPropertyValue(current, finalProperty, value);
+    }
+
+    private void setNestedProperty(Object target, String propertyPath, MapFile value) {
         if (target == null || propertyPath == null || propertyPath.isEmpty()) {
             return;
         }
