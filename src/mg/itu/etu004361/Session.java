@@ -6,6 +6,8 @@ import java.util.Map;
 import java.util.Set;
 
 public class Session {
+    public static final String AUTH_USER_KEY = "auth.user";
+
     private final Map<String, Object> data = new LinkedHashMap<>();
 
     public void setAttribute(String name, Object value) {
@@ -46,5 +48,22 @@ public class Session {
 
     public Set<String> getAttributeNames() {
         return Collections.unmodifiableSet(data.keySet());
+    }
+
+    public boolean isAuthenticated() {
+        return containsAttribute(AUTH_USER_KEY) && getAttribute(AUTH_USER_KEY) != null
+                && !String.valueOf(getAttribute(AUTH_USER_KEY)).trim().isEmpty();
+    }
+
+    public Object getUser() {
+        return getAttribute(AUTH_USER_KEY);
+    }
+
+    public void setUser(Object user) {
+        setAttribute(AUTH_USER_KEY, user);
+    }
+
+    public void logout() {
+        removeAttribute(AUTH_USER_KEY);
     }
 }
