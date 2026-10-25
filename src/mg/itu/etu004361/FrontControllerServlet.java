@@ -24,6 +24,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 import javax.servlet.http.Part;
+import mg.itu.etu004361.annotation.Auth;
 import mg.itu.etu004361.util.ControllerScanner;
 
 @MultipartConfig(
@@ -139,6 +140,12 @@ public class FrontControllerServlet extends HttpServlet {
                 Class<?> clazz = Class.forName(mapping.getClassName());
                 Object instance = getOrCreateControllerInstance(clazz);
                 Method method = resolveControllerMethod(clazz, mapping.getMethodName());
+
+                if (method.isAnnotationPresent(Auth.class) && !isAuthenticated(request)) {
+                    response.sendRedirect(request.getContextPath() + "/login");
+                    return;
+                }
+
                 BindingContext bindingContext = bindMethodArguments(method, request);
 
                 Object result = method.invoke(instance, bindingContext.arguments);
@@ -228,6 +235,16 @@ public class FrontControllerServlet extends HttpServlet {
         Object instance = clazz.getDeclaredConstructor().newInstance();
         Object previous = controllerInstances.putIfAbsent(clazz, instance);
         return previous != null ? previous : instance;
+    }
+
+    private boolean isAuthenticated(HttpServletRequest request) {
+        HttpSession httpSession = request.getSession(false);
+        if (httpSession == null) {
+            return false;
+        }
+
+        Object user = httpSession.getAttribute(Session.AUTH_USER_KEY);
+        return user != null && !String.valueOf(user).trim().isEmpty();
     }
 
     private BindingContext bindMethodArguments(Method method, HttpServletRequest request) {
