@@ -7,9 +7,14 @@ import java.io.PrintWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import javax.servlet.RequestDispatcher;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
@@ -17,6 +22,7 @@ import javax.servlet.annotation.MultipartConfig;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
 import javax.servlet.http.Part;
 import mg.itu.etu004361.util.ControllerScanner;
 
@@ -27,8 +33,21 @@ import mg.itu.etu004361.util.ControllerScanner;
 )
 public class FrontControllerServlet extends HttpServlet {
     private final Map<String, Mapping> mappings = new LinkedHashMap<>();
+    private final Map<Class<?>, Object> controllerInstances = new ConcurrentHashMap<>();
     private String packageToScan;
     private String initializationError;
+
+    private static class BindingContext {
+        private final Object[] arguments;
+        private final Session sessionArgument;
+        private final Set<String> originalSessionNames;
+
+        private BindingContext(Object[] arguments, Session sessionArgument, Set<String> originalSessionNames) {
+            this.arguments = arguments;
+            this.sessionArgument = sessionArgument;
+            this.originalSessionNames = originalSessionNames;
+        }
+    }
 
     // prefixe et suffixe lus depuis web.xml
     private String prefixe;
@@ -118,11 +137,12 @@ public class FrontControllerServlet extends HttpServlet {
 
             try {
                 Class<?> clazz = Class.forName(mapping.getClassName());
-                Object instance = clazz.getDeclaredConstructor().newInstance();
+                Object instance = getOrCreateControllerInstance(clazz);
                 Method method = resolveControllerMethod(clazz, mapping.getMethodName());
-                Object[] methodArguments = bindMethodArguments(method, request);
+                BindingContext bindingContext = bindMethodArguments(method, request);
 
-                Object result = method.invoke(instance, methodArguments);
+                Object result = method.invoke(instance, bindingContext.arguments);
+                synchronizeSessionAfterInvocation(request, bindingContext);
 
                 if (mapping.isWebAPI()) {
                     response.setContentType("application/json; charset=UTF-8");
@@ -199,21 +219,79 @@ public class FrontControllerServlet extends HttpServlet {
         return clazz.getDeclaredMethod(methodName);
     }
 
-    private Object[] bindMethodArguments(Method method, HttpServletRequest request) {
+    private Object getOrCreateControllerInstance(Class<?> clazz) throws ReflectiveOperationException {
+        Object existing = controllerInstances.get(clazz);
+        if (existing != null) {
+            return existing;
+        }
+
+        Object instance = clazz.getDeclaredConstructor().newInstance();
+        Object previous = controllerInstances.putIfAbsent(clazz, instance);
+        return previous != null ? previous : instance;
+    }
+
+    private BindingContext bindMethodArguments(Method method, HttpServletRequest request) {
         Parameter[] parameters = method.getParameters();
         Object[] arguments = new Object[parameters.length];
+        Session sessionArgument = null;
+        Set<String> originalSessionNames = new HashSet<>();
 
         for (int i = 0; i < parameters.length; i++) {
             Parameter parameter = parameters[i];
-            arguments[i] = bindParameterValue(parameter, request);
+            if (parameter.getType() == Session.class) {
+                sessionArgument = buildSessionFromHttpSession(request, originalSessionNames);
+                arguments[i] = sessionArgument;
+            } else {
+                arguments[i] = bindParameterValue(parameter, request);
+            }
         }
 
-        return arguments;
+        return new BindingContext(arguments, sessionArgument, originalSessionNames);
+    }
+
+    private Session buildSessionFromHttpSession(HttpServletRequest request, Set<String> originalSessionNames) {
+        HttpSession httpSession = request.getSession(true);
+        Session session = new Session();
+
+        Enumeration<String> attributeNames = httpSession.getAttributeNames();
+        while (attributeNames.hasMoreElements()) {
+            String attributeName = attributeNames.nextElement();
+            originalSessionNames.add(attributeName);
+            session.setAttribute(attributeName, httpSession.getAttribute(attributeName));
+        }
+
+        return session;
+    }
+
+    private void synchronizeSessionAfterInvocation(HttpServletRequest request, BindingContext bindingContext) {
+        if (bindingContext == null || bindingContext.sessionArgument == null) {
+            return;
+        }
+
+        HttpSession httpSession = request.getSession(false);
+        if (httpSession == null) {
+            return;
+        }
+
+        Map<String, Object> sessionData = bindingContext.sessionArgument.getData();
+        for (Map.Entry<String, Object> entry : sessionData.entrySet()) {
+            httpSession.setAttribute(entry.getKey(), entry.getValue());
+        }
+
+        for (String originalName : bindingContext.originalSessionNames) {
+            if (!sessionData.containsKey(originalName)) {
+                httpSession.removeAttribute(originalName);
+            }
+        }
     }
 
     private Object bindParameterValue(Parameter parameter, HttpServletRequest request) {
         String parameterName = parameter.getName();
         Class<?> parameterType = parameter.getType();
+
+        if (parameterType == Session.class) {
+            return buildSessionFromHttpSession(request, Collections.emptySet());
+        }
 
         if (parameterType == MapFile.class) {
             return buildMapFileFromRequest(parameterName, request);
