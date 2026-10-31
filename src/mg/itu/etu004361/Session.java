@@ -7,6 +7,7 @@ import java.util.Set;
 
 public class Session {
     public static final String AUTH_USER_KEY = "auth.user";
+    public static final String AUTH_ROLE_KEY = "auth.role";
 
     private final Map<String, Object> data = new LinkedHashMap<>();
 
@@ -65,5 +66,15 @@ public class Session {
 
     public void logout() {
         removeAttribute(AUTH_USER_KEY);
+        removeAttribute(AUTH_ROLE_KEY);
+    }
+
+    public String getRole() {
+        Object role = getAttribute(AUTH_ROLE_KEY);
+        return role != null ? String.valueOf(role) : null;
+    }
+
+    public void setRole(String role) {
+        setAttribute(AUTH_ROLE_KEY, role);
     }
 }

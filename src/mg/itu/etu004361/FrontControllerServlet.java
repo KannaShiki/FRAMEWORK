@@ -25,7 +25,9 @@ import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 import javax.servlet.http.Part;
 import mg.itu.etu004361.annotation.Auth;
+import mg.itu.etu004361.util.AuthChecker;
 import mg.itu.etu004361.util.ControllerScanner;
+import mg.itu.etu004361.util.FrameworkConfig;
 
 @MultipartConfig(
         maxFileSize = 10 * 1024 * 1024,
@@ -89,6 +91,24 @@ public class FrontControllerServlet extends HttpServlet {
         this.suffixe = getServletConfig().getInitParameter("suffixe");
         getServletContext().log("[Framework] prefixe = " + prefixe);
         getServletContext().log("[Framework] suffixe = " + suffixe);
+
+        // Initialize FrameworkConfig with context params
+        java.util.Map<String, String> contextParams = new java.util.LinkedHashMap<>();
+        Enumeration<String> paramNames = getServletContext().getInitParameterNames();
+        while (paramNames.hasMoreElements()) {
+            String name = paramNames.nextElement();
+            contextParams.put(name, getServletContext().getInitParameter(name));
+        }
+        FrameworkConfig.init(contextParams);
+
+        // Validate auth configuration
+        try {
+            AuthChecker.validate(mappings);
+        } catch (Exception e) {
+            getServletContext().log("Auth validation error: " + e.getMessage());
+            initializationError = "Auth validation error: " + e.getMessage();
+            return;
+        }
     }
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
@@ -138,14 +158,24 @@ public class FrontControllerServlet extends HttpServlet {
 
             try {
                 Class<?> clazz = Class.forName(mapping.getClassName());
-                Object instance = getOrCreateControllerInstance(clazz);
                 Method method = resolveControllerMethod(clazz, mapping.getMethodName());
 
-                if (method.isAnnotationPresent(Auth.class) && !isAuthenticated(request)) {
-                    response.sendRedirect(request.getContextPath() + "/login");
+                // Check authentication
+                AuthChecker.AuthResult authResult = AuthChecker.check(request, clazz, method);
+                if (authResult == AuthChecker.AuthResult.NON_AUTHENTIFIE) {
+                    if (mapping.isWebAPI()) {
+                        response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                    } else {
+                        response.sendRedirect(request.getContextPath() + FrameworkConfig.getLoginUrl());
+                    }
+                    return;
+                }
+                if (authResult == AuthChecker.AuthResult.INTERDIT) {
+                    response.sendError(HttpServletResponse.SC_FORBIDDEN);
                     return;
                 }
 
+                Object instance = getOrCreateControllerInstance(clazz);
                 BindingContext bindingContext = bindMethodArguments(method, request);
 
                 Object result = method.invoke(instance, bindingContext.arguments);
@@ -237,15 +267,6 @@ public class FrontControllerServlet extends HttpServlet {
         return previous != null ? previous : instance;
     }
 
-    private boolean isAuthenticated(HttpServletRequest request) {
-        HttpSession httpSession = request.getSession(false);
-        if (httpSession == null) {
-            return false;
-        }
-
-        Object user = httpSession.getAttribute(Session.AUTH_USER_KEY);
-        return user != null && !String.valueOf(user).trim().isEmpty();
-    }
 
     private BindingContext bindMethodArguments(Method method, HttpServletRequest request) {
         Parameter[] parameters = method.getParameters();
