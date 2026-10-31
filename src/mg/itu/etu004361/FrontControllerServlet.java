@@ -26,6 +26,7 @@ import javax.servlet.http.HttpSession;
 import javax.servlet.http.Part;
 import mg.itu.etu004361.annotation.Auth;
 import mg.itu.etu004361.util.AuthChecker;
+import mg.itu.etu004361.util.ControllerFactory;
 import mg.itu.etu004361.util.ControllerScanner;
 import mg.itu.etu004361.util.FrameworkConfig;
 
@@ -36,7 +37,6 @@ import mg.itu.etu004361.util.FrameworkConfig;
 )
 public class FrontControllerServlet extends HttpServlet {
     private final Map<String, Mapping> mappings = new LinkedHashMap<>();
-    private final Map<Class<?>, Object> controllerInstances = new ConcurrentHashMap<>();
     private String packageToScan;
     private String initializationError;
 
@@ -111,6 +111,12 @@ public class FrontControllerServlet extends HttpServlet {
         }
     }
 
+    @Override
+    public void destroy() {
+        ControllerFactory.clear();
+        super.destroy();
+    }
+
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         if (initializationError != null) {
@@ -175,7 +181,7 @@ public class FrontControllerServlet extends HttpServlet {
                     return;
                 }
 
-                Object instance = getOrCreateControllerInstance(clazz);
+                Object instance = ControllerFactory.get(clazz);
                 BindingContext bindingContext = bindMethodArguments(method, request);
 
                 Object result = method.invoke(instance, bindingContext.arguments);
@@ -254,17 +260,6 @@ public class FrontControllerServlet extends HttpServlet {
             }
         }
         return clazz.getDeclaredMethod(methodName);
-    }
-
-    private Object getOrCreateControllerInstance(Class<?> clazz) throws ReflectiveOperationException {
-        Object existing = controllerInstances.get(clazz);
-        if (existing != null) {
-            return existing;
-        }
-
-        Object instance = clazz.getDeclaredConstructor().newInstance();
-        Object previous = controllerInstances.putIfAbsent(clazz, instance);
-        return previous != null ? previous : instance;
     }
 
 
